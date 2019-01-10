@@ -29,6 +29,7 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
      */
     public static function activate()
     {
+		Helper::addAction('add-post',"CSDN_Plugin");
         // TODO: Implement activate() method.
 
         Typecho_Plugin::factory('admin/menu.php')->navBar = array('CSDN_Plugin', 'render');
@@ -160,7 +161,7 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
             $url_list = $xpath->query('//*[@id="mainBox"]/main/div[2]')[0]->getElementsByTagName('div');
 
             //得到的链接数为0则退出循环
-            if (count($url_list) == 0) {
+            if (count($url_list) == 0 || i>20) {
                 break;
             }
             $str = $this->get_post($url_list, $userId, $update_num, $insert_num, $db);
@@ -233,7 +234,9 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
                 }
             }
             return null;
-        } catch (Error  | Exception | Typecho_Exception $e) {
+        } catch (Error $e) {
+            return array('msg' => $e->getMessage(), 'code' => 0);
+        }catch (Exception $e) {
             return array('msg' => $e->getMessage(), 'code' => 0);
         }
     }

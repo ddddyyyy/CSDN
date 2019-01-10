@@ -12,7 +12,7 @@ function add_post() {
         //     allowToastClose: true,
         // });
         toastr.remove()
-        alert('出现未知异常 'errorThrown+‘ 可以使用开发者模式查看改请求add-post的reponse确认出错信息’)
+        alert('出现未知异常 '+ errorThrown+ '可以使用开发者模式查看改请求add-post的reponse确认出错信息')
         toastr.options = {
             "closeButton": true,
             "debug": false,
