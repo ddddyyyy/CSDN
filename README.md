@@ -16,7 +16,8 @@ Typecho插件--将CSDN的博文迁移进Typecho
 
 2. 如果你使用的是nginx代理，那么可能会出现php的pathinfo报404，即点击了上面的导入报404错误，可尝试下面的配置
 
-···
+```      
+
         if (!-e $request_filename) {
             rewrite ^(.*)$ /index.php$1 last;
         }
@@ -34,4 +35,5 @@ Typecho插件--将CSDN的博文迁移进Typecho
             fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
             include        fastcgi_params;
         }
-···
+        
+```
