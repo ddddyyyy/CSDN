@@ -24,15 +24,16 @@ Typecho插件--将CSDN的博文迁移进Typecho
             rewrite ^(.*)$ /index.php$1 last;
         }
         location ~  .*\.php(\/.*)*$ {
+            fastcgi_split_path_info ^(.+?\.php)(/.*)$;
             fastcgi_pass   localhost:9000;
-                set $path_info "";
-                set $real_script_name $fastcgi_script_name;
-                if ($fastcgi_script_name ~ "^(.+?\.php)(/.+)$") {
+            set $path_info "";
+            set $real_script_name $fastcgi_script_name;
+            if ($fastcgi_script_name ~ "^(.+?\.php)(/.+)$") {
                         set $real_script_name $1;
                         set $path_info $2;
-                }
-                fastcgi_param SCRIPT_NAME $real_script_name;
-                fastcgi_param PATH_INFO $path_info;
+            }
+            fastcgi_param SCRIPT_NAME $real_script_name;
+            fastcgi_param PATH_INFO $path_info;
             fastcgi_index  index.php;
             fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
             include        fastcgi_params;
