@@ -17,8 +17,10 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
     protected static $r_article_id = '/^https\:\/\/blog\.csdn\.net\/.+\/article\/details\//';
     //文章链接的正则
     protected static $r_article;
-    //博客的地址
+    //博客列表的地址
     protected static $source_url;
+    //博客的地址
+    protected static $article_url;
 
     /**
      * 启用插件方法,如果启用失败,直接抛出异常
@@ -29,7 +31,6 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
      */
     public static function activate()
     {
-		Helper::addAction('add-post',"CSDN_Plugin");
         // TODO: Implement activate() method.
 
         Typecho_Plugin::factory('admin/menu.php')->navBar = array('CSDN_Plugin', 'render');
@@ -124,8 +125,9 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
         //得到文章链接的正则
         CSDN_Plugin::$r_article = '/https\:\/\/blog\.csdn\.net\/' . $username . '\/article\/details\/[0-9]+/';
         //得到文章id的正则
-        CSDN_Plugin::$source_url = "https://blog.csdn.net/$username/article/list/";
+        CSDN_Plugin::$source_url = "https://blog.csdn.net/$username/phoenix/article/list/";
 
+        CSDN_Plugin::$article_url = "https://blog.csdn.net/$username/article/details/";
 
         //数据库获取
         $db = Typecho_Db::get();
@@ -135,41 +137,30 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
         //博客页面页数
         $i = 1;
         $str = null;
-
         do {
-            //得到博客的列表
-            $html = file_get_contents(CSDN_Plugin::$source_url . $i);
-            //页面无法加载说明用户不存在或者网络不好
-            if ($html == null) {
+            $content = file_get_contents(CSDN_Plugin::$source_url . $i);
+            $json = CSDN_Plugin::decodeUnicode($content);
+            $json = json_decode($content, true);
+
+            if ($json['status'] == 1) {
+                $article_list = $json['data']['article_list'];
+                //取得页数
+                $page_num = ceil($json['data']['total'] / 20);
+                $a_list = array();
+                foreach ($article_list as $article) {
+                    $a_list[] = array($article['ArticleId'], $article['PostTime']);
+                }
+                $str = $this->get_post($a_list, $userId, $update_num, $insert_num, $db);
+                if ($str) {
+                    break;
+                }
+                $i += 1;
+            } else {
                 $str = array('msg' => '用户不存在或者网络不好', 'code' => 0);
                 break;
             }
-            $dom = new DOMDocument();
-            //清除警告--start
-            // modify state
-            $libxml_previous_state = libxml_use_internal_errors(true);
-            $dom->loadHTML($html);
-            // handle errors
-            libxml_clear_errors();
-            // restore
-            libxml_use_internal_errors($libxml_previous_state);
-            //清除警告---end
-            //新建一个xpath
-            $xpath = new DOMXPath($dom);
-
-            //得到文章的列表
-            $url_list = $xpath->query('//*[@id="mainBox"]/main/div[2]')[0]->getElementsByTagName('div');
-
-            //得到的链接数为0则退出循环
-            if (count($url_list) == 0 || i>20) {
-                break;
-            }
-            $str = $this->get_post($url_list, $userId, $update_num, $insert_num, $db);
-            if ($str) {
-                break;
-            }
-            $i += 1;
-        } while (1);
+        } while ($page_num >= $i);
+        //得到博客的列表
         if (!$str) {
             $str = array('msg' => "导入了$insert_num 篇文章，更新了$update_num 篇文章", 'code' => 1);
         }
@@ -184,11 +175,11 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
      * 异常时返回错误信息
      * @return array|null
      */
-    function get_post($url_list, $userId, &$update_num, &$insert_num, $db)
+    function get_post($a_list, $userId, &$update_num, &$insert_num, $db)
     {
         try {
-            foreach ($url_list as $url) {
-                $result = CSDN_Plugin::get_post_info($url);
+            foreach ($a_list as $a) {
+                $result = CSDN_Plugin::get_post_info($a[0], $a[1]);
                 if (gettype($result) == 'array') {
                     $result['post']['allowComment'] = "1";
                     $result['post']['allowPing'] = "1";
@@ -236,7 +227,9 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
             return null;
         } catch (Error $e) {
             return array('msg' => $e->getMessage(), 'code' => 0);
-        }catch (Exception $e) {
+        } catch (Typecho_Exception $e) {
+            return array('msg' => $e->getMessage(), 'code' => 0);
+        } catch (Exception $e) {
             return array('msg' => $e->getMessage(), 'code' => 0);
         }
     }
@@ -246,44 +239,31 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
      * @param $article
      * @return array 文章的信息
      */
-    function get_post_info($article)
+    function get_post_info($aid, $date)
     {
-        $temp = $article->getElementsByTagName('h4');
-        if ($temp[0] != null) {
-            $tag_a = $temp[0]->getElementsByTagName('a')[0];
-            if ($tag_a != null) {
-                $uri = $tag_a->getAttribute('href');
-                //如果匹配链接成功
-                if (preg_match(CSDN_Plugin::$r_article, $uri, $result) == 1) {
-                    $article_url = $result[0];
-                    //得到日期
-                    $create_date = $article->getElementsByTagName('div')[0]->getElementsByTagName('p')[0]->getElementsByTagName('span')[0]->textContent;
-                    $create_date = strtotime($create_date);
-                    //得到文章的id
-                    $article_id = preg_replace(CSDN_Plugin::$r_article_id, "", $article_url);
-                    //获取markdown格式的字符串
-                    $content = file_get_contents("https://mp.csdn.net/mdeditor/getArticle?id=$article_id", false, CSDN_Plugin::$context);
-                    /** @var string $json */
-                    $json = CSDN_Plugin::decodeUnicode($content);
-                    /** @var json $json */
-                    $json = json_decode($content, true);
-                    //解析
-                    if ($json["status"]) {
-                        $description = $json["data"]["description"];
-                        $markdown = '<!--markdown-->' . $description . '<!--more-->' . $json["data"]["markdowncontent"];
-                        $title = $json["data"]["title"];
+
+        //得到日期
+        $create_date = strtotime($date);
+        //获取markdown格式的字符串
+        $content = file_get_contents("https://mp.csdn.net/mdeditor/getArticle?id=$aid", false, CSDN_Plugin::$context);
+        /** @var string $json */
+        $json = CSDN_Plugin::decodeUnicode($content);
+        /** @var json $json */
+        $json = json_decode($content, true);
+        //解析
+        if ($json["status"]) {
+            $description = $json["data"]["description"];
+            $markdown = '<!--markdown-->' . $description . '<!--more-->' . $json["data"]["markdowncontent"];
+            $title = $json["data"]["title"];
 //                        $html = $json["data"]["content"];
-                        $categories = $json['data']['categories'];
-                        str_replace('，', ',', $categories);
-                        $categories = array_unique(array_map('trim', explode(',', $categories)));
-                        $tags = $json['data']['tags'];
-                        $post = array('title' => $title, 'type' => 'post', 'cid' => $article_id, 'text' => $markdown, 'created' => $create_date, 'modified' => time());
-                        return array('post' => $post, "tags" => $tags, "categories" => $categories, "description" => $description);
-                    } else {
-                        return $json['error'];
-                    }
-                }
-            }
+            $categories = $json['data']['categories'];
+            str_replace('，', ',', $categories);
+            $categories = array_unique(array_map('trim', explode(',', $categories)));
+            $tags = $json['data']['tags'];
+            $post = array('title' => $title, 'type' => 'post', 'cid' => $aid, 'text' => $markdown, 'created' => $create_date, 'modified' => time());
+            return array('post' => $post, "tags" => $tags, "categories" => $categories, "description" => $description);
+        } else {
+            return $json['error'];
         }
     }
 
@@ -387,4 +367,5 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
 //    }
 
 }
+
 
