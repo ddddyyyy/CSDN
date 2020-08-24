@@ -103,8 +103,7 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
      */
     public function add_post()
     {
-
-        error_reporting(0);
+//        error_reporting(0);
         header('Content-Type:text/json;charset=utf-8');
 
         $user = Typecho_Widget::widget('Widget_User');
@@ -137,10 +136,11 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
         //博客页面页数
         $i = 1;
         $str = null;
+
         do {
             $content = file_get_contents(CSDN_Plugin::$source_url . $i);
             $json = CSDN_Plugin::decodeUnicode($content);
-            $json = json_decode($content, true);
+            $json = json_decode($json, true);
 
             if ($json['status'] == 1) {
                 $article_list = $json['data']['article_list'];
@@ -241,17 +241,14 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
      */
     function get_post_info($aid, $date)
     {
-
         //得到日期
         $create_date = strtotime($date);
         //获取markdown格式的字符串
-        $content = file_get_contents("https://mp.csdn.net/mdeditor/getArticle?id=$aid", false, CSDN_Plugin::$context);
-        /** @var string $json */
+        $content = file_get_contents("https://blog-console-api.csdn.net/v1/editor/getArticle?id=$aid", false, CSDN_Plugin::$context);
         $json = CSDN_Plugin::decodeUnicode($content);
-        /** @var json $json */
-        $json = json_decode($content, true);
+        $json = json_decode($json, true);
         //解析
-        if ($json["status"]) {
+        if (strcmp($json["msg"], "success") == 0) {
             $description = $json["data"]["description"];
             $markdown = '<!--markdown-->' . $description . '<!--more-->' . $json["data"]["markdowncontent"];
             $title = $json["data"]["title"];
@@ -263,7 +260,7 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
             $post = array('title' => $title, 'type' => 'post', 'cid' => $aid, 'text' => $markdown, 'created' => $create_date, 'modified' => time());
             return array('post' => $post, "tags" => $tags, "categories" => $categories, "description" => $description);
         } else {
-            return $json['error'];
+            return $json['msg'];
         }
     }
 
