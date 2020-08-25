@@ -35,7 +35,8 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
 
         Typecho_Plugin::factory('admin/menu.php')->navBar = array('CSDN_Plugin', 'render');
         Typecho_Plugin::factory('admin/menu.php')->navBar = array('CSDN_Plugin', 'header');
-        Helper::addRoute('add-post', '/add-post', 'CSDN_Plugin', 'add_post');
+        Helper::addRoute('get-articles-id', '/get-articles-id', 'CSDN_Plugin', 'get_articles_id');
+        Helper::addRoute('add-article', '/add-article', 'CSDN_Plugin', 'add_article');
     }
 
     /**
@@ -48,7 +49,8 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
     public static function deactivate()
     {
         // TODO: Implement deactivate() method.
-        Helper::removeRoute('add-post');
+        Helper::removeRoute('get-articles-id');
+        Helper::removeRoute('add-article');
     }
 
     /**
@@ -95,15 +97,93 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
             . '</a>';
     }
 
+
     /**
      * 添加文章
-     * @throws Typecho_Db_Exception
+     */
+    public function add_article()
+    {
+        header('Content-Type:text/json;charset=utf-8');
+        //得到config的输入框的值
+        $csdn = Helper::options()->plugin('CSDN');
+        $username = $csdn->UserName;
+        $usertoken = $csdn->UserToken;
+        $userinfo = $csdn->UserInfo;
+        //初始化cookie
+        CSDN_Plugin::$context = CSDN_Plugin::init_header($username, $userinfo, $usertoken);
+        $aid = $_POST['aid'];
+        $date = $_POST['date'];
+        try {
+            $result = CSDN_Plugin::get_post_info($aid, $date);
+            if (gettype($result) == 'array') {
+                //数据库获取
+                $db = Typecho_Db::get();
+                $user = Typecho_Widget::widget('Widget_User');
+                $user->execute();
+                $userId = $user->uid;
+                $result['post']['allowComment'] = "1";
+                $result['post']['allowPing'] = "1";
+                $result['post']['allowFeed'] = "1";
+                $result['post']['authorId'] = $userId;
+                $result['post']['slug'] = $result['post']['cid'];
+
+                //文章是否存在
+                $temp = $db->fetchRow($db->select('cid')
+                    ->from('table.contents')
+                    ->where('table.contents.cid = ?', $result['post']['cid'])->limit(1));
+                if ($temp) {
+                    $update = $db->update('table.contents')->rows($result['post'])->where('table.contents.cid = ?', $result['post']['cid'])->limit(1);
+                    $db->query($update);
+                } else {
+                    $insert = $db->insert('table.contents')
+                        ->rows($result['post']);
+                    $db->query($insert);
+                }
+                //插入tag
+                Widget_Abstract_Comments::widget('Widget_Contents_Post_Edit')->setTags($result["post"]["cid"], $result['tags']);
+                //插入分类，得到分类id
+                foreach ($result['categories'] as &$category) {
+                    $t = $db->fetchRow($db->select('table.metas.mid')
+                        ->from('table.metas')->where('name <=> ? and type <=> ?', $category, 'category')->limit(1));
+                    if (!$t) {
+                        $options['name'] = $category;
+                        $options['slug'] = $category;
+                        $options['type'] = 'category';
+                        $options['order'] = 0;
+                        $category = $db->query($db->insert('table.metas')->rows($options));
+                    } else {
+                        $category = $t['mid'];
+                    }
+                }
+                Widget_Abstract_Comments::widget('Widget_Contents_Post_Edit')->setCategories($result["post"]["cid"], $result['categories']);
+                $str = array('msg' => "success", 'code' => 1, 'data' => $aid);
+            } else {
+                if ($result != null) {
+                    $str = array('msg' => $result . "(如果是没有操作权限，请查看是否为cookie错误或者过期)", 'code' => 0, 'data' => $aid);
+                } else {
+                    $str = array('msg' => "result is null", 'code' => 0, 'data' => $aid);
+                    @error_log(json_encode($result));
+                }
+            }
+        } catch (Error $e) {
+            $str = array('msg' => $e->getMessage(), 'code' => 0, 'data' => $aid);
+        } catch (Typecho_Exception $e) {
+            $str = array('msg' => $e->getMessage(), 'code' => 0, 'data' => $aid);
+        } catch (Exception $e) {
+            $str = array('msg' => $e->getMessage(), 'code' => 0, 'data' => $aid);
+        }
+        //返回json数据
+        $json = json_encode($str);
+        echo $json;
+    }
+
+    /**
+     * 添加文章id列表
      * @throws Typecho_Exception
      * @throws Typecho_Plugin_Exception
      */
-    public function add_post()
+    public function get_articles_id()
     {
-//        error_reporting(0);
         header('Content-Type:text/json;charset=utf-8');
 
         $user = Typecho_Widget::widget('Widget_User');
@@ -111,13 +191,19 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
             return;
         }
         $user->execute();
-        $userId = $user->uid;
 
         //得到config的输入框的值
         $csdn = Helper::options()->plugin('CSDN');
         $username = $csdn->UserName;
         $usertoken = $csdn->UserToken;
         $userinfo = $csdn->UserInfo;
+        if ($username == null || $usertoken == null || $userinfo == null) {
+            $str = array('msg' => '请在设置界面填写所需参数', 'code' => 0);
+            //返回json数据
+            $jsonencode = json_encode($str);
+            echo $jsonencode;
+            return;
+        }
 
         //初始化cookie
         CSDN_Plugin::$context = CSDN_Plugin::init_header($username, $userinfo, $usertoken);
@@ -125,34 +211,25 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
         CSDN_Plugin::$r_article = '/https\:\/\/blog\.csdn\.net\/' . $username . '\/article\/details\/[0-9]+/';
         //得到文章id的正则
         CSDN_Plugin::$source_url = "https://blog.csdn.net/$username/phoenix/article/list/";
-
         CSDN_Plugin::$article_url = "https://blog.csdn.net/$username/article/details/";
 
-        //数据库获取
-        $db = Typecho_Db::get();
-        //记录导入的文章
-        $update_num = 0;
-        $insert_num = 0;
         //博客页面页数
         $i = 1;
         $str = null;
+        $a_list = array();
 
         do {
             $content = file_get_contents(CSDN_Plugin::$source_url . $i);
-            $json = CSDN_Plugin::decodeUnicode($content);
-            $json = json_decode($json, true);
+//            $json = CSDN_Plugin::decodeUnicode($content);
+            $json = json_decode($content, true);
 
             if ($json['status'] == 1) {
                 $article_list = $json['data']['article_list'];
                 //取得页数
                 $page_num = ceil($json['data']['total'] / 20);
-                $a_list = array();
+
                 foreach ($article_list as $article) {
-                    $a_list[] = array($article['ArticleId'], $article['PostTime']);
-                }
-                $str = $this->get_post($a_list, $userId, $update_num, $insert_num, $db);
-                if ($str) {
-                    break;
+                    $a_list = array_merge($a_list, array(array($article['ArticleId'], $article['PostTime'])));
                 }
                 $i += 1;
             } else {
@@ -160,83 +237,20 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
                 break;
             }
         } while ($page_num >= $i);
-        //得到博客的列表
+        //返回博客id的列表
         if (!$str) {
-            $str = array('msg' => "导入了$insert_num 篇文章，更新了$update_num 篇文章", 'code' => 1);
+            $str = array('data' => $a_list, 'code' => 1);
         }
         //返回json数据
         $jsonencode = json_encode($str);
         echo $jsonencode;
-
     }
 
-    /**
-     * 根据得到的文章链接插入文章
-     * 异常时返回错误信息
-     * @return array|null
-     */
-    function get_post($a_list, $userId, &$update_num, &$insert_num, $db)
-    {
-        try {
-            foreach ($a_list as $a) {
-                $result = CSDN_Plugin::get_post_info($a[0], $a[1]);
-                if (gettype($result) == 'array') {
-                    $result['post']['allowComment'] = "1";
-                    $result['post']['allowPing'] = "1";
-                    $result['post']['allowFeed'] = "1";
-                    $result['post']['authorId'] = $userId;
-                    $result['post']['slug'] = $result['post']['cid'];
-
-                    //文章是否存在
-                    $temp = $db->fetchRow($db->select('cid')
-                        ->from('table.contents')
-                        ->where('table.contents.cid = ?', $result['post']['cid'])->limit(1));
-                    if ($temp) {
-                        $update = $db->update('table.contents')->rows($result['post'])->where('table.contents.cid = ?', $result['post']['cid'])->limit(1);
-                        $db->query($update);
-                        $update_num += 1;
-                    } else {
-                        $insert = $db->insert('table.contents')
-                            ->rows($result['post']);
-                        $db->query($insert);
-                        $insert_num += 1;
-                    }
-                    //插入tag
-                    Widget_Abstract_Comments::widget('Widget_Contents_Post_Edit')->setTags($result["post"]["cid"], $result['tags']);
-                    //插入分类，得到分类id
-                    foreach ($result['categories'] as &$category) {
-                        $t = $db->fetchRow($db->select('table.metas.mid')
-                            ->from('table.metas')->where('name <=> ? and type <=> ?', $category, 'category')->limit(1));
-                        if (!$t) {
-                            $options['name'] = $category;
-                            $options['slug'] = $category;
-                            $options['type'] = 'category';
-                            $options['order'] = 0;
-                            $category = $db->query($db->insert('table.metas')->rows($options));
-                        } else {
-                            $category = $t['mid'];
-                        }
-                    }
-                    Widget_Abstract_Comments::widget('Widget_Contents_Post_Edit')->setCategories($result["post"]["cid"], $result['categories']);
-                } else {
-                    if ($result != null) {
-                        return array('msg' => $result . "(如果是没有操作权限，请查看是否为cookie错误或者过期)", 'code' => 0);
-                    }
-                }
-            }
-            return null;
-        } catch (Error $e) {
-            return array('msg' => $e->getMessage(), 'code' => 0);
-        } catch (Typecho_Exception $e) {
-            return array('msg' => $e->getMessage(), 'code' => 0);
-        } catch (Exception $e) {
-            return array('msg' => $e->getMessage(), 'code' => 0);
-        }
-    }
 
     /**
      * 得到要输入数据库中的文章信息
-     * @param $article
+     * @param $aid
+     * @param $date
      * @return array 文章的信息
      */
     function get_post_info($aid, $date)
@@ -245,14 +259,12 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
         $create_date = strtotime($date);
         //获取markdown格式的字符串
         $content = file_get_contents("https://blog-console-api.csdn.net/v1/editor/getArticle?id=$aid", false, CSDN_Plugin::$context);
-        $json = CSDN_Plugin::decodeUnicode($content);
-        $json = json_decode($json, true);
+        $json = json_decode($content, true);
         //解析
         if (strcmp($json["msg"], "success") == 0) {
             $description = $json["data"]["description"];
             $markdown = '<!--markdown-->' . $description . '<!--more-->' . $json["data"]["markdowncontent"];
             $title = $json["data"]["title"];
-//                        $html = $json["data"]["content"];
             $categories = $json['data']['categories'];
             str_replace('，', ',', $categories);
             $categories = array_unique(array_map('trim', explode(',', $categories)));
@@ -276,6 +288,8 @@ class CSDN_Plugin extends Widget_Abstract_Contents implements Typecho_Plugin_Int
     {
         $Path = Helper::options()->pluginUrl . '/CSDN/';
         echo '<link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" />';
+        echo '<link rel="stylesheet" type="text/css" href="' . $Path . 'css/my_bar.css"/>' . "\n\r";;
+        echo '<script src="https://cdnjs.cloudflare.com/ajax/libs/nanobar/0.4.2/nanobar.min.js" integrity="sha512-1Al+dnfE+1gI7IBmpUZ8XnZ3l3Nv6cyA+XgdtlaptVNxJcWWRzHxOPzT+2pbp52qtXa2jkwk0MWYSmxslMsHCQ==" crossorigin="anonymous"></script>' . "\n\r";
         echo '<script type="text/javascript" src="' . $Path . 'js/add_post.js"></script>' . "\n\r";
         echo '<script type="text/javascript" src="https://cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script>' . "\n\r";
         echo '<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>' . "\n\r";
