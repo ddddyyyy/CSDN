@@ -1,6 +1,9 @@
 # Typecho_Plugin_CSDN
 Typecho插件--将CSDN的博文迁移进Typecho
 
+- 会将所有的文章导入/更新至typecho数据库
+- 会根据文章的tag，自动创建tag
+
 ---
 
 ## 使用说明
